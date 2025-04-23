@@ -1,116 +1,262 @@
-/**
- * Admin JavaScript for WP WhatsApp Order Follow-up
- */
-(function ($) {
-    'use strict';
-
-    $(document).ready(function () {
-        // Handle WhatsApp message button clicks
-        $('.send-whatsapp-btn').on('click', function (e) {
-            var recordId = $(this).data('record-id');
-
-            // Send AJAX request to log the message
+jQuery(document).ready(function($) {
+    // Handle Send WhatsApp Message button
+    $('.send-whatsapp').on('click', function(e) {
+        e.preventDefault();
+        
+        const button = $(this);
+        const phone = button.data('phone');
+        const products = button.data('products');
+        const orderId = button.data('order-id');
+        
+        // Construct the WhatsApp message
+        let message = "😊We'd love to hear your feedback about the product(s) you bought, here on whatsapp or the same on our product page review section";
+        
+        // Add product information to the message
+        if (products && products.length > 0) {
+            products.forEach(product => {
+                const productUrl = window.location.origin + '/?p=' + product.id;
+                message += "\n\n• " + product.name + " - " + productUrl;
+            });
+        }
+        
+        message += "\n\nThank you!";
+        
+        // Encode the message for URL
+        const encodedMessage = encodeURIComponent(message);
+        
+        // Create WhatsApp desktop app URL (whatsapp:// protocol)
+        const whatsappUrl = "whatsapp://send?phone=" + phone + "&text=" + encodedMessage;
+        
+        // Open WhatsApp desktop app using the protocol
+        window.location.href = whatsappUrl;
+    });
+    
+    // Handle Mark as Completed button
+    $('.mark-completed').on('click', function(e) {
+        e.preventDefault();
+        
+        const button = $(this);
+        const orderId = button.data('order-id');
+        const row = button.closest('tr');
+        
+        // Disable the button while processing
+        button.prop('disabled', true).text('Processing...');
+        
+        // Send Ajax request to mark review as complete
+        $.ajax({
+            url: wcWhatsAppReviews.ajax_url,
+            type: 'POST',
+            data: {
+                action: 'mark_review_complete',
+                order_id: orderId,
+                nonce: wcWhatsAppReviews.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    // Update the UI
+                    row.find('.review-status').text('Completed');
+                    
+                    // Replace buttons with completed text
+                    const actionsCell = row.find('.actions');
+                    actionsCell.html('<span class="completed-text">Review Completed</span>');
+                    
+                    // Show success notification
+                    showNotification('Success', 'Review marked as complete', 'success');
+                } else {
+                    // Re-enable the button on error
+                    button.prop('disabled', false).text('Completed');
+                    
+                    // Show error notification
+                    showNotification('Error', response.data || 'Failed to update status', 'error');
+                }
+            },
+            error: function() {
+                // Re-enable the button on error
+                button.prop('disabled', false).text('Completed');
+                
+                // Show error notification
+                showNotification('Error', 'An error occurred while processing your request', 'error');
+            }
+        });
+    });
+    
+    // Handle filter button
+    $('#filter-submit').on('click', function(e) {
+        e.preventDefault();
+        loadOrdersTable(1);
+    });
+    
+    // Function to load orders table with pagination
+    function loadOrdersTable(page) {
+        const status = $('#filter-order-status').val();
+        
+        // Show loading indicator
+        $('#wc-whatsapp-reviews-table-body').html('<tr><td colspan="7">Loading...</td></tr>');
+        
+        // Send Ajax request to filter orders
+        $.ajax({
+            url: wcWhatsAppReviews.ajax_url,
+            type: 'POST',
+            data: {
+                action: 'filter_whatsapp_reviews',
+                status: status,
+                page: page,
+                nonce: wcWhatsAppReviews.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    // Update the table with filtered results
+                    $('#wc-whatsapp-reviews-table-body').html(response.data.table_html);
+                    $('#wc-whatsapp-reviews-pagination').html(response.data.pagination_html);
+                    
+                    // Re-initialize event handlers for new elements
+                    initEventHandlers();
+                    initPaginationHandlers();
+                } else {
+                    // Show error message
+                    $('#wc-whatsapp-reviews-table-body').html(
+                        '<tr><td colspan="7">Error loading orders: ' + 
+                        (response.data || 'Unknown error') + '</td></tr>'
+                    );
+                }
+            },
+            error: function() {
+                // Show error message
+                $('#wc-whatsapp-reviews-table-body').html(
+                    '<tr><td colspan="7">An error occurred while loading orders</td></tr>'
+                );
+            }
+        });
+    }
+    
+    // Initialize pagination handlers
+    function initPaginationHandlers() {
+        // Handle pagination clicks
+        $('#wc-whatsapp-reviews-pagination a').on('click', function(e) {
+            e.preventDefault();
+            const page = $(this).data('page');
+            loadOrdersTable(page);
+        });
+    }
+    
+    // Initialize pagination on page load
+    initPaginationHandlers();
+    
+    // Helper function to initialize event handlers for dynamically added elements
+    function initEventHandlers() {
+        // Re-attach event handlers for Send WhatsApp button
+        $('.send-whatsapp').off('click').on('click', function(e) {
+            e.preventDefault();
+            
+            const button = $(this);
+            const phone = button.data('phone');
+            const products = button.data('products');
+            const orderId = button.data('order-id');
+            
+            // Construct the WhatsApp message
+            let message = "Hello! Thank you for your purchase. We'd love to hear your feedback about the product(s) you bought: ";
+            
+            // Add product information to the message
+            if (products && products.length > 0) {
+                products.forEach(product => {
+                    const productUrl = window.location.origin + '/?p=' + product.id;
+                    message += "\n\n• " + product.name + " - " + productUrl;
+                });
+            }
+            
+            message += "\n\nPlease share your honest review. Thank you!";
+            
+            // Encode the message for URL
+            const encodedMessage = encodeURIComponent(message);
+            
+            // Create WhatsApp desktop app URL (whatsapp:// protocol)
+            const whatsappUrl = "whatsapp://send?phone=" + phone + "&text=" + encodedMessage;
+            
+            // Open WhatsApp desktop app using the protocol
+            window.location.href = whatsappUrl;
+        });
+        
+        // Re-attach event handlers for Mark as Completed button
+        $('.mark-completed').off('click').on('click', function(e) {
+            e.preventDefault();
+            
+            const button = $(this);
+            const orderId = button.data('order-id');
+            const row = button.closest('tr');
+            
+            // Disable the button while processing
+            button.prop('disabled', true).text('Processing...');
+            
+            // Send Ajax request to mark review as complete
             $.ajax({
+                url: wcWhatsAppReviews.ajax_url,
                 type: 'POST',
-                url: wpwaf_vars.ajaxurl,
                 data: {
-                    action: 'log_whatsapp_message',
-                    record_id: recordId,
-                    nonce: wpwaf_vars.nonce
+                    action: 'mark_review_complete',
+                    order_id: orderId,
+                    nonce: wcWhatsAppReviews.nonce
                 },
-                success: function (response) {
+                success: function(response) {
                     if (response.success) {
-                        // Increment the message count in the UI
-                        var countCell = $(e.target).closest('tr').find('td:nth-child(4)');
-                        var countParts = countCell.text().split('/');
-                        var newCount = parseInt(countParts[0]) + 1;
-                        countCell.text(newCount + '/4');
-
-                        // Update last sent time
-                        $(e.target).closest('tr').find('td:nth-child(5)').text('just now');
-
-                        // If we reached the limit, replace the button
-                        if (newCount >= 4) {
-                            $(e.target).replaceWith('<span class="message-limit-reached">Message limit reached</span>');
-                        }
+                        // Update the UI
+                        row.find('.review-status').text('Completed');
+                        
+                        // Replace buttons with completed text
+                        const actionsCell = row.find('.actions');
+                        actionsCell.html('<span class="completed-text">Review Completed</span>');
+                        
+                        // Show success notification
+                        showNotification('Success', 'Review marked as complete', 'success');
+                    } else {
+                        // Re-enable the button on error
+                        button.prop('disabled', false).text('Completed');
+                        
+                        // Show error notification
+                        showNotification('Error', response.data || 'Failed to update status', 'error');
                     }
+                },
+                error: function() {
+                    // Re-enable the button on error
+                    button.prop('disabled', false).text('Completed');
+                    
+                    // Show error notification
+                    showNotification('Error', 'An error occurred while processing your request', 'error');
                 }
             });
         });
-    });
-
-    // Handle manual override button
-    $('.mark-commented-btn').on('click', function (e) {
-        e.preventDefault();
-
-        var recordId = $(this).data('record-id');
-        var row = $(this).closest('tr');
-
-        if (confirm('Are you sure you want to mark this order as commented?')) {
-            $.ajax({
-                type: 'POST',
-                url: wpwaf_vars.ajaxurl,
-                data: {
-                    action: 'mark_as_commented_manually',
-                    record_id: recordId,
-                    nonce: wpwaf_vars.nonce
-                },
-                success: function (response) {
-                    if (response.success) {
-                        // Remove the row or update its status
-                        row.fadeOut(400, function () {
-                            row.remove();
-                        });
-                    } else {
-                        alert('Error: ' + response.data.message);
-                    }
-                }
-            });
-        }
-    });
-
-    // Handle import orders button
-    $('#import-orders-btn').on('click', function (e) {
-        e.preventDefault();
-
-        var button = $(this);
-        var statusSpan = $('#import-status');
-
-        if (confirm('Do you want to import all existing completed orders?')) {
-            // Disable button and show loading
-            button.prop('disabled', true).text('Importing...');
-            statusSpan.text('Please wait...').show();
-
-            $.ajax({
-                type: 'POST',
-                url: wpwaf_vars.ajaxurl,
-                data: {
-                    action: 'import_existing_orders',
-                    nonce: wpwaf_vars.nonce
-                },
-                success: function (response) {
-                    if (response.success) {
-                        statusSpan.text(response.data.message);
-
-                        // If orders were imported, reload the page after 2 seconds
-                        if (response.data.count > 0) {
-                            setTimeout(function () {
-                                location.reload();
-                            }, 2000);
-                        } else {
-                            button.prop('disabled', false).text('Import Existing Orders');
-                        }
-                    } else {
-                        statusSpan.text('Error: ' + response.data.message);
-                        button.prop('disabled', false).text('Import Existing Orders');
-                    }
-                },
-                error: function () {
-                    statusSpan.text('Error: Server error occurred');
-                    button.prop('disabled', false).text('Import Existing Orders');
-                }
-            });
-        }
-    });
-
-})(jQuery);
+    }
+    
+    // Helper function to show notifications
+    function showNotification(title, message, type) {
+        // Create notification element
+        const notification = $('<div class="wc-whatsapp-reviews-notification ' + type + '">' +
+            '<strong>' + title + '</strong>' +
+            '<p>' + message + '</p>' +
+            '<span class="close-notification">×</span>' +
+            '</div>');
+        
+        // Add notification to the page
+        $('body').append(notification);
+        
+        // Show notification with animation
+        setTimeout(function() {
+            notification.addClass('show');
+        }, 10);
+        
+        // Auto-hide after 5 seconds
+        setTimeout(function() {
+            notification.removeClass('show');
+            setTimeout(function() {
+                notification.remove();
+            }, 300);
+        }, 5000);
+        
+        // Close button handler
+        notification.find('.close-notification').on('click', function() {
+            notification.removeClass('show');
+            setTimeout(function() {
+                notification.remove();
+            }, 300);
+        });
+    }
+});
