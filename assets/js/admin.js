@@ -1,4 +1,7 @@
 jQuery(document).ready(function($) {
+    // Store the current filter status globally
+    let currentFilterStatus = 'all';
+    
     // Handle Send WhatsApp Message button
     $('.send-whatsapp').on('click', function(e) {
         e.preventDefault();
@@ -83,12 +86,79 @@ jQuery(document).ready(function($) {
     // Handle filter button
     $('#filter-submit').on('click', function(e) {
         e.preventDefault();
-        loadOrdersTable(1);
+        currentFilterStatus = $('#filter-order-status').val();
+        loadOrdersTable(1, currentFilterStatus);
     });
     
+    // Handle search button
+    $('#search-submit').on('click', function(e) {
+        e.preventDefault();
+        searchCustomers();
+    });
+    
+    // Handle search on Enter key
+    $('#search-customer').on('keypress', function(e) {
+        if (e.which === 13) {
+            e.preventDefault();
+            searchCustomers();
+        }
+    });
+    
+    // Function to search customers
+    function searchCustomers() {
+        const searchTerm = $('#search-customer').val().trim();
+        
+        if (searchTerm === '') {
+            // If search is empty, reload the table with current filter
+            loadOrdersTable(1, currentFilterStatus);
+            return;
+        }
+        
+        // Show loading indicator
+        $('#wc-whatsapp-reviews-table-body').html('<tr><td colspan="7">Searching...</td></tr>');
+        
+        // Hide pagination when showing search results
+        $('#wc-whatsapp-reviews-pagination').empty();
+        
+        // Send Ajax request to search customers
+        $.ajax({
+            url: wcWhatsAppReviews.ajax_url,
+            type: 'POST',
+            data: {
+                action: 'search_whatsapp_reviews',
+                search: searchTerm,
+                nonce: wcWhatsAppReviews.nonce
+            },
+            success: function(response) {
+                if (response.success) {
+                    // Update the table with search results
+                    $('#wc-whatsapp-reviews-table-body').html(response.data.table_html);
+                    
+                    // Re-initialize event handlers for new elements
+                    initEventHandlers();
+                } else {
+                    // Show error message
+                    $('#wc-whatsapp-reviews-table-body').html(
+                        '<tr><td colspan="7">Error searching customers: ' + 
+                        (response.data || 'Unknown error') + '</td></tr>'
+                    );
+                }
+            },
+            error: function() {
+                // Show error message
+                $('#wc-whatsapp-reviews-table-body').html(
+                    '<tr><td colspan="7">An error occurred while searching customers</td></tr>'
+                );
+            }
+        });
+    }
+    
     // Function to load orders table with pagination
-    function loadOrdersTable(page) {
-        const status = $('#filter-order-status').val();
+    function loadOrdersTable(page, status) {
+        // Store the status parameter for pagination
+        if (status) {
+            currentFilterStatus = status;
+        }
         
         // Show loading indicator
         $('#wc-whatsapp-reviews-table-body').html('<tr><td colspan="7">Loading...</td></tr>');
@@ -99,7 +169,7 @@ jQuery(document).ready(function($) {
             type: 'POST',
             data: {
                 action: 'filter_whatsapp_reviews',
-                status: status,
+                status: currentFilterStatus,
                 page: page,
                 nonce: wcWhatsAppReviews.nonce
             },
@@ -135,7 +205,8 @@ jQuery(document).ready(function($) {
         $('#wc-whatsapp-reviews-pagination a').on('click', function(e) {
             e.preventDefault();
             const page = $(this).data('page');
-            loadOrdersTable(page);
+            const status = $(this).data('status') || currentFilterStatus;
+            loadOrdersTable(page, status);
         });
     }
     
@@ -154,7 +225,7 @@ jQuery(document).ready(function($) {
             const orderId = button.data('order-id');
             
             // Construct the WhatsApp message
-            let message = "Hello! Thank you for your purchase. We'd love to hear your feedback about the product(s) you bought: ";
+            let message = "😊We'd love to hear your feedback about the product(s) you bought, here on whatsapp or the same on our product page review section";
             
             // Add product information to the message
             if (products && products.length > 0) {
@@ -164,7 +235,7 @@ jQuery(document).ready(function($) {
                 });
             }
             
-            message += "\n\nPlease share your honest review. Thank you!";
+            message += "\n\nThank you!";
             
             // Encode the message for URL
             const encodedMessage = encodeURIComponent(message);

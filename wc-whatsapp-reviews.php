@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce WhatsApp Reviews
  * Description: Send WhatsApp messages to customers asking for product reviews
- * Version: 1.2
+ * Version: 1.3
  * Author: <a href="https://chebonkelvin.com">Chebon Kelvin</a>
  * Text Domain: wc-whatsapp-reviews
  */
@@ -29,6 +29,143 @@ class WC_WhatsApp_Reviews {
         // Ajax handlers
         add_action('wp_ajax_mark_review_complete', array($this, 'mark_review_complete'));
         add_action('wp_ajax_filter_whatsapp_reviews', array($this, 'filter_whatsapp_reviews'));
+        add_action('wp_ajax_search_whatsapp_reviews', array($this, 'search_whatsapp_reviews'));
+    }
+    
+    /**
+     * Search orders by customer name (AJAX handler)
+     */
+    public function search_whatsapp_reviews() {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'wc-whatsapp-reviews-nonce')) {
+            wp_send_json_error('Invalid nonce');
+            exit;
+        }
+        
+        // Get search term
+        $search_term = isset($_POST['search']) ? sanitize_text_field($_POST['search']) : '';
+        
+        if (empty($search_term)) {
+            wp_send_json_error('Search term is required');
+            exit;
+        }
+        
+        // Store output in buffer
+        ob_start();
+        
+        // Search orders by customer name
+        $args = array(
+            'status' => 'completed',
+            'limit' => -1,
+            'return' => 'ids',
+        );
+        
+        $order_ids = wc_get_orders($args);
+        $matched_orders = array();
+        
+        foreach ($order_ids as $order_id) {
+            $order = wc_get_order($order_id);
+            $customer_name = $order->get_billing_first_name() . ' ' . $order->get_billing_last_name();
+            
+            if (stripos($customer_name, $search_term) !== false) {
+                $matched_orders[] = $order;
+            }
+        }
+        
+        global $wpdb;
+        $review_status_table = $wpdb->prefix . 'whatsapp_review_status';
+        
+        // Display matched orders
+        if (empty($matched_orders)) {
+            echo '<tr><td colspan="7">' . esc_html__('No matching orders found.', 'wc-whatsapp-reviews') . '</td></tr>';
+        } else {
+            foreach ($matched_orders as $order) {
+                $order_id = $order->get_id();
+                
+                // Check review status
+                $review_status = $wpdb->get_var($wpdb->prepare(
+                    "SELECT status FROM $review_status_table WHERE order_id = %d",
+                    $order_id
+                ));
+                
+                // If no record exists, set status to pending and create record
+                if (null === $review_status) {
+                    $review_status = 'pending';
+                    $wpdb->insert(
+                        $review_status_table,
+                        array(
+                            'order_id' => $order_id,
+                            'status' => $review_status
+                        )
+                    );
+                }
+                
+                $customer_name = $order->get_billing_first_name() . ' ' . $order->get_billing_last_name();
+                $phone = $this->format_phone_number($order->get_billing_phone());
+                
+                // Get order items
+                $items = $order->get_items();
+                $products = array();
+                
+                foreach ($items as $item) {
+                    $product_id = $item->get_product_id();
+                    $product_name = $item->get_name();
+                    $products[] = array(
+                        'id' => $product_id,
+                        'name' => $product_name
+                    );
+                }
+                
+                ?>
+                <tr data-order-id="<?php echo esc_attr($order_id); ?>">
+                    <td>
+                        <a href="<?php echo esc_url(admin_url('post.php?post=' . absint($order_id) . '&action=edit')); ?>" target="_blank">
+                            #<?php echo esc_html($order_id); ?>
+                        </a>
+                    </td>
+                    <td><?php echo esc_html($customer_name); ?></td>
+                    <td><?php echo esc_html($phone); ?></td>
+                    <td>
+                        <?php 
+                        $product_names = array_map(function($product) {
+                            return $product['name'];
+                        }, $products);
+                        echo esc_html(implode(', ', $product_names)); 
+                        ?>
+                    </td>
+                    <td><?php echo esc_html($order->get_date_created()->date_i18n(get_option('date_format'))); ?></td>
+                    <td class="review-status"><?php echo esc_html(ucfirst($review_status)); ?></td>
+                    <td class="actions">
+                        <?php if ($review_status !== 'completed') : ?>
+                            <button class="button send-whatsapp" 
+                                data-phone="<?php echo esc_attr($phone); ?>"
+                                data-products="<?php echo esc_attr(json_encode($products)); ?>"
+                                data-order-id="<?php echo esc_attr($order_id); ?>"
+                            >
+                                <?php esc_html_e('Send Message', 'wc-whatsapp-reviews'); ?>
+                            </button>
+                            <button class="button mark-completed" 
+                                data-order-id="<?php echo esc_attr($order_id); ?>"
+                            >
+                                <?php esc_html_e('Completed', 'wc-whatsapp-reviews'); ?>
+                            </button>
+                        <?php else : ?>
+                            <span class="completed-text"><?php esc_html_e('Review Completed', 'wc-whatsapp-reviews'); ?></span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <?php
+            }
+        }
+        
+        $table_html = ob_get_clean();
+        
+        // Send response
+        wp_send_json_success(array(
+            'table_html' => $table_html
+        ));
+        
+        exit;
     }
     
     /**
@@ -42,7 +179,7 @@ class WC_WhatsApp_Reviews {
         }
         
         // Get filter status
-        $status = isset($_POST['status']) ? sanitize_text_field($_POST['status']) : 'pending';
+        $status = isset($_POST['status']) ? sanitize_text_field($_POST['status']) : 'all';
         
         // Store output in buffer
         ob_start();
@@ -107,7 +244,11 @@ class WC_WhatsApp_Reviews {
                 
                 ?>
                 <tr data-order-id="<?php echo esc_attr($order_id); ?>">
-                    <td>#<?php echo esc_html($order_id); ?></td>
+                    <td>
+                        <a href="<?php echo esc_url(admin_url('post.php?post=' . absint($order_id) . '&action=edit')); ?>" target="_blank">
+                            #<?php echo esc_html($order_id); ?>
+                        </a>
+                    </td>
                     <td><?php echo esc_html($customer_name); ?></td>
                     <td><?php echo esc_html($phone); ?></td>
                     <td>
@@ -196,13 +337,13 @@ class WC_WhatsApp_Reviews {
                 
                 // First page
                 if ($current_page > 1) {
-                    $page_links[] = '<a class="first-page" href="#" data-page="1"><span class="screen-reader-text">' . 
+                    $page_links[] = '<a class="first-page" href="#" data-page="1" data-status="' . esc_attr($status) . '"><span class="screen-reader-text">' . 
                         __('First page', 'wc-whatsapp-reviews') . '</span><span aria-hidden="true">&laquo;</span></a>';
                 }
                 
                 // Previous page
                 if ($current_page > 1) {
-                    $page_links[] = '<a class="prev-page" href="#" data-page="' . ($current_page - 1) . '"><span class="screen-reader-text">' . 
+                    $page_links[] = '<a class="prev-page" href="#" data-page="' . ($current_page - 1) . '" data-status="' . esc_attr($status) . '"><span class="screen-reader-text">' . 
                         __('Previous page', 'wc-whatsapp-reviews') . '</span><span aria-hidden="true">‹</span></a>';
                 }
                 
@@ -214,19 +355,19 @@ class WC_WhatsApp_Reviews {
                     if ($i === $current_page) {
                         $page_links[] = '<span class="tablenav-pages-navspan current" aria-current="page">' . $i . '</span>';
                     } else {
-                        $page_links[] = '<a class="page-numbers" href="#" data-page="' . $i . '">' . $i . '</a>';
+                        $page_links[] = '<a class="page-numbers" href="#" data-page="' . $i . '" data-status="' . esc_attr($status) . '">' . $i . '</a>';
                     }
                 }
                 
                 // Next page
                 if ($current_page < $total_pages) {
-                    $page_links[] = '<a class="next-page" href="#" data-page="' . ($current_page + 1) . '"><span class="screen-reader-text">' . 
+                    $page_links[] = '<a class="next-page" href="#" data-page="' . ($current_page + 1) . '" data-status="' . esc_attr($status) . '"><span class="screen-reader-text">' . 
                         __('Next page', 'wc-whatsapp-reviews') . '</span><span aria-hidden="true">›</span></a>';
                 }
                 
                 // Last page
                 if ($current_page < $total_pages) {
-                    $page_links[] = '<a class="last-page" href="#" data-page="' . $total_pages . '"><span class="screen-reader-text">' . 
+                    $page_links[] = '<a class="last-page" href="#" data-page="' . $total_pages . '" data-status="' . esc_attr($status) . '"><span class="screen-reader-text">' . 
                         __('Last page', 'wc-whatsapp-reviews') . '</span><span aria-hidden="true">&raquo;</span></a>';
                 }
                 
@@ -295,14 +436,14 @@ class WC_WhatsApp_Reviews {
             'wc-whatsapp-reviews-styles', 
             plugin_dir_url(__FILE__) . 'assets/css/admin.css', 
             array(), 
-            '1.0.0'
+            '1.3.0'
         );
         
         wp_enqueue_script(
             'wc-whatsapp-reviews-scripts',
             plugin_dir_url(__FILE__) . 'assets/js/admin.js',
             array('jquery'),
-            '1.0.0',
+            '1.3.0',
             true
         );
         
@@ -326,32 +467,39 @@ class WC_WhatsApp_Reviews {
             
             <div class="wc-whatsapp-reviews-container">
                 <div class="tablenav top">
-                    <div class="alignleft actions">
+                    <div class="alignleft actions filter-actions">
                         <select id="filter-order-status">
+                            <option value="all"><?php esc_html_e('All Orders', 'wc-whatsapp-reviews'); ?></option>
                             <option value="pending"><?php esc_html_e('Pending Reviews', 'wc-whatsapp-reviews'); ?></option>
                             <option value="completed"><?php esc_html_e('Completed Reviews', 'wc-whatsapp-reviews'); ?></option>
-                            <option value="all"><?php esc_html_e('All Orders', 'wc-whatsapp-reviews'); ?></option>
                         </select>
                         <input type="submit" id="filter-submit" class="button" value="<?php esc_attr_e('Filter', 'wc-whatsapp-reviews'); ?>">
                     </div>
+                    
+                    <div class="alignright search-box">
+                        <input type="search" id="search-customer" placeholder="<?php esc_attr_e('Search customer name...', 'wc-whatsapp-reviews'); ?>">
+                        <input type="submit" id="search-submit" class="button" value="<?php esc_attr_e('Search', 'wc-whatsapp-reviews'); ?>">
+                    </div>
                 </div>
                 
-                <table class="wp-list-table widefat fixed striped">
-                    <thead>
-                        <tr>
-                            <th><?php esc_html_e('Order ID', 'wc-whatsapp-reviews'); ?></th>
-                            <th><?php esc_html_e('Customer', 'wc-whatsapp-reviews'); ?></th>
-                            <th><?php esc_html_e('Phone', 'wc-whatsapp-reviews'); ?></th>
-                            <th><?php esc_html_e('Products', 'wc-whatsapp-reviews'); ?></th>
-                            <th><?php esc_html_e('Order Date', 'wc-whatsapp-reviews'); ?></th>
-                            <th><?php esc_html_e('Status', 'wc-whatsapp-reviews'); ?></th>
-                            <th><?php esc_html_e('Actions', 'wc-whatsapp-reviews'); ?></th>
-                        </tr>
-                    </thead>
-                    <tbody id="wc-whatsapp-reviews-table-body">
-                        <?php $this->render_orders_table(); ?>
-                    </tbody>
-                </table>
+                <div class="table-responsive">
+                    <table class="wp-list-table widefat fixed striped">
+                        <thead>
+                            <tr>
+                                <th><?php esc_html_e('Order ID', 'wc-whatsapp-reviews'); ?></th>
+                                <th><?php esc_html_e('Customer', 'wc-whatsapp-reviews'); ?></th>
+                                <th><?php esc_html_e('Phone', 'wc-whatsapp-reviews'); ?></th>
+                                <th><?php esc_html_e('Products', 'wc-whatsapp-reviews'); ?></th>
+                                <th><?php esc_html_e('Order Date', 'wc-whatsapp-reviews'); ?></th>
+                                <th><?php esc_html_e('Status', 'wc-whatsapp-reviews'); ?></th>
+                                <th><?php esc_html_e('Actions', 'wc-whatsapp-reviews'); ?></th>
+                            </tr>
+                        </thead>
+                        <tbody id="wc-whatsapp-reviews-table-body">
+                            <?php $this->render_orders_table(); ?>
+                        </tbody>
+                    </table>
+                </div>
                 
                 <div class="tablenav bottom">
                     <div class="tablenav-pages" id="wc-whatsapp-reviews-pagination">
@@ -422,7 +570,11 @@ class WC_WhatsApp_Reviews {
             
             ?>
             <tr data-order-id="<?php echo esc_attr($order_id); ?>">
-                <td>#<?php echo esc_html($order_id); ?></td>
+                <td>
+                    <a href="<?php echo esc_url(admin_url('post.php?post=' . absint($order_id) . '&action=edit')); ?>" target="_blank">
+                        #<?php echo esc_html($order_id); ?>
+                    </a>
+                </td>
                 <td><?php echo esc_html($customer_name); ?></td>
                 <td><?php echo esc_html($phone); ?></td>
                 <td>
@@ -483,22 +635,50 @@ class WC_WhatsApp_Reviews {
             number_format_i18n($total_orders)
         ) . '</span>';
         
-        $page_links = paginate_links(array(
-            'base' => add_query_arg('paged', '%#%'),
-            'format' => '',
-            'prev_text' => '&laquo;',
-            'next_text' => '&raquo;',
-            'total' => $total_pages,
-            'current' => $current_page,
-            'type' => 'array'
-        ));
-        
-        if ($page_links) {
-            echo '<span class="pagination-links">' . join("\n", $page_links) . '</span>';
+        if ($total_pages > 1) {
+            $page_links = array();
+            
+            // First page
+            if ($current_page > 1) {
+                $page_links[] = '<a class="first-page" href="#" data-page="1" data-status="all"><span class="screen-reader-text">' . 
+                    __('First page', 'wc-whatsapp-reviews') . '</span><span aria-hidden="true">&laquo;</span></a>';
+            }
+            
+            // Previous page
+            if ($current_page > 1) {
+                $page_links[] = '<a class="prev-page" href="#" data-page="' . ($current_page - 1) . '" data-status="all"><span class="screen-reader-text">' . 
+                    __('Previous page', 'wc-whatsapp-reviews') . '</span><span aria-hidden="true">‹</span></a>';
+            }
+            
+            // Page numbers
+            $start = max(1, min($current_page - 2, $total_pages - 4));
+            $end = min($total_pages, max($current_page + 2, 5));
+            
+            for ($i = $start; $i <= $end; $i++) {
+                if ($i === $current_page) {
+                    $page_links[] = '<span class="tablenav-pages-navspan current" aria-current="page">' . $i . '</span>';
+                } else {
+                    $page_links[] = '<a class="page-numbers" href="#" data-page="' . $i . '" data-status="all">' . $i . '</a>';
+                }
+            }
+            
+            // Next page
+            if ($current_page < $total_pages) {
+                $page_links[] = '<a class="next-page" href="#" data-page="' . ($current_page + 1) . '" data-status="all"><span class="screen-reader-text">' . 
+                    __('Next page', 'wc-whatsapp-reviews') . '</span><span aria-hidden="true">›</span></a>';
+            }
+            
+            // Last page
+            if ($current_page < $total_pages) {
+                $page_links[] = '<a class="last-page" href="#" data-page="' . $total_pages . '" data-status="all"><span class="screen-reader-text">' . 
+                    __('Last page', 'wc-whatsapp-reviews') . '</span><span aria-hidden="true">&raquo;</span></a>';
+            }
+            
+            echo '<span class="pagination-links">' . join('', $page_links) . '</span>';
         }
     }
     
-    /**
+  /**
      * Format phone number for WhatsApp
      */
     private function format_phone_number($phone) {

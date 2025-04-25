@@ -11,15 +11,36 @@
     color: #23282d;
 }
 
-/* Filter controls */
+/* Filter and search controls */
 .tablenav.top {
     margin-bottom: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
 }
 
 .tablenav select {
     height: 32px;
     vertical-align: middle;
     margin-right: 8px;
+}
+
+.search-box {
+    display: flex;
+    align-items: center;
+}
+
+.search-box input[type="search"] {
+    margin-right: 8px;
+    height: 32px;
+    width: 200px;
+}
+
+/* Table responsive container */
+.table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 /* Table styling */
@@ -183,6 +204,26 @@
 
 /* Responsive styles */
 @media screen and (max-width: 782px) {
+    .tablenav.top {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .filter-actions, .search-box {
+        width: 100%;
+        margin-bottom: 10px;
+    }
+    
+    .search-box input[type="search"] {
+        width: 100%;
+        margin-right: 0;
+        margin-bottom: 5px;
+    }
+    
+    .search-box #search-submit {
+        width: 100%;
+    }
+    
     .wc-whatsapp-reviews table th,
     .wc-whatsapp-reviews table td {
         padding: 8px 5px;
